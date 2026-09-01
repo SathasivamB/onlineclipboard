@@ -1,13 +1,27 @@
 /* eslint-disable no-restricted-globals */
 
-const CACHE_NAME = 'online-clipboard-v2';
+const CACHE_NAME = 'online-clipboard-v3';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      // Pre-cache the root path. Dynamic assets (fingerprinted JS/CSS) 
-      // will be cached automatically as they are fetched.
-      return cache.addAll(['/']);
+    caches.open(CACHE_NAME).then(async (cache) => {
+      // First, cache the root path
+      await cache.add('/');
+      
+      try {
+        // Fetch the CRA asset manifest to find the hashed filenames
+        const response = await fetch('/asset-manifest.json');
+        if (response.ok) {
+          const manifest = await response.json();
+          // Extract the URLs to cache (JS, CSS, images, etc.)
+          const urlsToCache = Object.values(manifest.files).filter(url => 
+            !url.endsWith('.map') // Ignore source maps
+          );
+          await cache.addAll(urlsToCache);
+        }
+      } catch (error) {
+        console.error('Failed to pre-cache manifest assets:', error);
+      }
     })
   );
   self.skipWaiting();
@@ -28,9 +42,15 @@ self.addEventListener('fetch', (event) => {
       
       // Otherwise, fetch from network and cache it
       return fetch(event.request).then((response) => {
-        if (!response || response.status !== 200 || response.type !== 'basic') {
+        if (!response || response.status !== 200) {
           return response;
         }
+        
+        // Only cache valid basic/cors responses
+        if (response.type !== 'basic' && response.type !== 'cors') {
+          return response;
+        }
+
         const responseToCache = response.clone();
         caches.open(CACHE_NAME).then((cache) => {
           cache.put(event.request, responseToCache);
@@ -41,6 +61,9 @@ self.addEventListener('fetch', (event) => {
         if (event.request.mode === 'navigate') {
           return caches.match('/');
         }
+        
+        // Prevent "TypeError: Failed to convert value to 'Response'"
+        return Response.error();
       });
     })
   );
