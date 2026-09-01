@@ -1,71 +1,57 @@
 /* eslint-disable no-restricted-globals */
 
-const CACHE_NAME = 'online-clipboard-v1';
-const urlsToCache = [
-  '/',
-  '/index.html',
-  '/static/js/bundle.js',
-  '/static/css/main.css',
-  '/manifest.json',
-  '/logo.png'
-];
+const CACHE_NAME = 'online-clipboard-v2';
 
-// Install a service worker
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then((cache) => {
-        console.log('Opened cache');
-        return cache.addAll(urlsToCache).catch(() => {
-          // Some URLs might not exist in dev, that's fine
-          console.log('Some cache URLs were not available');
-        });
-      })
+    caches.open(CACHE_NAME).then((cache) => {
+      // Pre-cache the root path. Dynamic assets (fingerprinted JS/CSS) 
+      // will be cached automatically as they are fetched.
+      return cache.addAll(['/']);
+    })
   );
   self.skipWaiting();
 });
 
-// Cache and return requests
 self.addEventListener('fetch', (event) => {
-  // Skip non-GET requests and Supabase/Firebase API calls
   if (event.request.method !== 'GET') return;
   if (event.request.url.includes('supabase.co')) return;
   if (event.request.url.includes('googleapis.com')) return;
   if (event.request.url.includes('firebaseio.com')) return;
+  if (event.request.url.includes('chrome-extension')) return;
 
   event.respondWith(
-    caches.match(event.request)
-      .then((response) => {
-        if (response) {
+    caches.match(event.request).then((cachedResponse) => {
+      if (cachedResponse) {
+        return cachedResponse; // Serve from cache if available
+      }
+      
+      // Otherwise, fetch from network and cache it
+      return fetch(event.request).then((response) => {
+        if (!response || response.status !== 200 || response.type !== 'basic') {
           return response;
         }
-        return fetch(event.request).then((response) => {
-          if (!response || response.status !== 200 || response.type !== 'basic') {
-            return response;
-          }
-          const responseToCache = response.clone();
-          caches.open(CACHE_NAME)
-            .then((cache) => {
-              cache.put(event.request, responseToCache);
-            });
-          return response;
+        const responseToCache = response.clone();
+        caches.open(CACHE_NAME).then((cache) => {
+          cache.put(event.request, responseToCache);
         });
-      })
-      .catch(() => {
-        // If both cache and network fail, return the offline page
-        return caches.match('/index.html');
-      })
+        return response;
+      }).catch(() => {
+        // If offline and requesting a page navigation, return the cached root shell
+        if (event.request.mode === 'navigate') {
+          return caches.match('/');
+        }
+      });
+    })
   );
 });
 
-// Update a service worker
 self.addEventListener('activate', (event) => {
-  const cacheWhitelist = [CACHE_NAME];
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames.map((cacheName) => {
-          if (cacheWhitelist.indexOf(cacheName) === -1) {
+          if (cacheName !== CACHE_NAME) {
             return caches.delete(cacheName);
           }
           return null;
