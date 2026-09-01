@@ -1,12 +1,17 @@
 /* eslint-disable no-restricted-globals */
 
-const CACHE_NAME = 'online-clipboard-v3';
+const CACHE_NAME = 'online-clipboard-v4';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(async (cache) => {
-      // First, cache the root path
-      await cache.add('/');
+      // Safely attempt to pre-cache the root and index
+      try {
+        await cache.add('/index.html');
+        await cache.add('/');
+      } catch (e) {
+        console.warn('Failed to cache root shell', e);
+      }
       
       try {
         // Fetch the CRA asset manifest to find the hashed filenames
@@ -56,10 +61,19 @@ self.addEventListener('fetch', (event) => {
           cache.put(event.request, responseToCache);
         });
         return response;
-      }).catch(() => {
+      }).catch(async () => {
         // If offline and requesting a page navigation, return the cached root shell
         if (event.request.mode === 'navigate') {
-          return caches.match('/');
+          const cache = await caches.open(CACHE_NAME);
+          const cachedRoot = await cache.match('/') || await cache.match('/index.html');
+          if (cachedRoot) {
+            return cachedRoot;
+          }
+          // If we somehow still don't have the HTML cached, show a clean error instead of a dinosaur
+          return new Response(
+            '<html><body style="font-family:sans-serif;text-align:center;padding:50px;"><h2>App is offline</h2><p>Please connect to the internet to load the app for the first time.</p></body></html>',
+            { headers: { 'Content-Type': 'text/html' } }
+          );
         }
         
         // Prevent "TypeError: Failed to convert value to 'Response'"
